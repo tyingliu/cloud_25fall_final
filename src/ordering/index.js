@@ -1,157 +1,174 @@
-import { PutItemCommand, QueryCommand, ScanCommand } from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { ddbClient } from "./ddbClient";
+// /src/ordering/index.js
+
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+
+const client = new DynamoDBClient({});
+const ddbDocClient = DynamoDBDocumentClient.from(client);
+
+const tableName = process.env.DYNAMODB_TABLE_NAME;
+const primaryKey = process.env.PRIMARY_KEY || 'userName';
+const sortKey = process.env.SORT_KEY || 'orderDate';
 
 exports.handler = async function (event) {
-  console.log("request:", JSON.stringify(event, undefined, 2));
-
-  if (event.Records != null) {
-    // SQS Invocation
-    await sqsInvocation(event);
-  }
-  else if (event['detail-type'] !== undefined) {
-    // EventBridge Invocation
-    await eventBridgeInvocation(event);
-  } else {
-    // API Gateway Invocation -- return sync response
-    return await apiGatewayInvocation(event);
-  }
-};
-
-const sqsInvocation = async (event) => {
-  console.log(`sqsInvocation function. event : "${JSON.stringify(event)}"`);
-
-  // Use for...of instead of forEach
-  for (const record of event.Records) {
-    try {
-      console.log("Record: %j", record);
-      const checkoutEventRequest = JSON.parse(record.body);
-
-      console.log("Processing order for user:", checkoutEventRequest.detail.userName);
-      await createOrder(checkoutEventRequest.detail);
-      console.log("Successfully created order for:", checkoutEventRequest.detail.userName);
-
-    } catch (error) {
-      console.error("Error creating order:", error);
-      throw error; // This makes SQS retry the message
-    }
-  }
-
-  console.log("All SQS records processed");
-};
-
-const eventBridgeInvocation = async (event) => {
-  console.log(`eventBridgeInvocation function. event : "${event}"`);
-
-  // create order item into db
-  await createOrder(event.detail);
-}
-
-const createOrder = async (basketCheckoutEvent) => {
-  try {
-    console.log(`createOrder function. event : "${basketCheckoutEvent}"`);
-
-    // set orderDate for SK of order dynamodb
-    const orderDate = new Date().toISOString();
-    basketCheckoutEvent.orderDate = orderDate;
-    console.log(basketCheckoutEvent);
-
-    const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME,
-      Item: marshall(basketCheckoutEvent || {})
-    };
-
-    const createResult = await ddbClient.send(new PutItemCommand(params));
-    console.log(createResult);
-    return createResult;
-
-  } catch (e) {
-    console.error(e);
-    throw e;
-  }
-}
-
-const apiGatewayInvocation = async (event) => {
-  // GET /order	
-  // GET /order/{userName}
-  let body;
+  console.log("Request:", JSON.stringify(event, undefined, 2));
 
   try {
-    switch (event.httpMethod) {
-      case "GET":
-        if (event.pathParameters != null) {
-          body = await getOrder(event);
-        } else {
-          body = await getAllOrders();
-        }
-        break;
-      default:
-        throw new Error(`Unsupported route: "${event.httpMethod}"`);
+    // Check if this is an SQS event (from EventBridge via SQS)
+    if (event.Records) {
+      return await handleSQSEvent(event);
     }
 
-    console.log(body);
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: `Successfully finished operation: "${event.httpMethod}"`,
-        body: body
-      })
-    };
-  }
-  catch (e) {
-    console.error(e);
+    // Handle API Gateway events
+    if (event.httpMethod) {
+      return await handleApiGatewayEvent(event);
+    }
+
+    throw new Error("Unsupported event type");
+
+  } catch (error) {
+    console.error("Error:", error);
     return {
       statusCode: 500,
       body: JSON.stringify({
-        message: "Failed to perform operation.",
-        errorMsg: e.message,
-        errorStack: e.stack,
+        message: "Failed to process request",
+        error: error.message
       })
     };
   }
+};
+
+// Handle SQS messages from EventBridge
+async function handleSQSEvent(event) {
+  console.log(`Processing ${event.Records.length} SQS messages`);
+
+  const failedMessageIds = [];
+
+  for (const record of event.Records) {
+    try {
+      console.log("SQS Record:", JSON.stringify(record, undefined, 2));
+
+      // Parse the EventBridge event from SQS message body
+      const eventBridgeEvent = JSON.parse(record.body);
+      console.log("EventBridge Event:", JSON.stringify(eventBridgeEvent, undefined, 2));
+
+      // Extract checkout basket data from EventBridge detail
+      const checkoutRequest = eventBridgeEvent.detail;
+
+      if (!checkoutRequest || !checkoutRequest.userName) {
+        throw new Error("Invalid checkout request: missing userName");
+      }
+
+      // Create order from checkout basket
+      const orderDate = new Date().toISOString();
+      const order = {
+        [primaryKey]: checkoutRequest.userName,
+        [sortKey]: orderDate,
+        totalPrice: checkoutRequest.totalPrice || 0,
+        firstName: checkoutRequest.firstName || '',
+        lastName: checkoutRequest.lastName || '',
+        email: checkoutRequest.email || '',
+        address: checkoutRequest.address || '',
+        paymentMethod: checkoutRequest.paymentMethod || '',
+        cardInfo: checkoutRequest.cardInfo || '',
+        items: checkoutRequest.items || []
+      };
+
+      // Save order to DynamoDB
+      const params = {
+        TableName: tableName,
+        Item: order
+      };
+
+      await ddbDocClient.send(new PutCommand(params));
+      console.log(`Order created successfully for user: ${checkoutRequest.userName}`);
+
+    } catch (error) {
+      console.error(`Failed to process message ${record.messageId}:`, error);
+      failedMessageIds.push(record.messageId);
+    }
+  }
+
+  // Return batch item failures for retry
+  if (failedMessageIds.length > 0) {
+    return {
+      batchItemFailures: failedMessageIds.map(id => ({ itemIdentifier: id }))
+    };
+  }
+
+  return {
+    batchItemFailures: []
+  };
 }
 
-const getOrder = async (event) => {
-  console.log("getOrder");
+// Handle API Gateway requests
+async function handleApiGatewayEvent(event) {
+  let body;
+
+  switch (event.httpMethod) {
+    case "GET":
+      if (event.pathParameters && event.pathParameters.userName) {
+        // GET /order/{userName} - Get orders for specific user
+        body = await getOrder(event.pathParameters.userName);
+      } else {
+        // GET /order - Get all orders
+        body = await getAllOrders();
+      }
+      break;
+    default:
+      throw new Error(`Unsupported method: ${event.httpMethod}`);
+  }
+
+  return {
+    statusCode: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,OPTIONS"
+    },
+    body: JSON.stringify(body)
+  };
+}
+
+// Get orders for a specific user
+async function getOrder(userName) {
+  console.log(`Getting orders for user: ${userName}`);
 
   try {
-    // expected request : xxx/order/swn?orderDate=timestamp
-    const userName = event.pathParameters.userName;
-    const orderDate = event.queryStringParameters.orderDate;
-
     const params = {
-      KeyConditionExpression: "userName = :userName and orderDate = :orderDate",
+      TableName: tableName,
+      KeyConditionExpression: `${primaryKey} = :userName`,
       ExpressionAttributeValues: {
-        ":userName": { S: userName },
-        ":orderDate": { S: orderDate }
+        ':userName': userName
       },
-      TableName: process.env.DYNAMODB_TABLE_NAME
+      ScanIndexForward: false // Sort by orderDate descending (newest first)
     };
 
-    const { Items } = await ddbClient.send(new QueryCommand(params));
+    const { Items } = await ddbDocClient.send(new QueryCommand(params));
+    console.log(`Found ${Items.length} orders for user: ${userName}`);
 
-    console.log(Items);
-    return Items.map((item) => unmarshall(item));
-  } catch (e) {
-    console.error(e);
-    throw e;
+    return Items;
+  } catch (error) {
+    console.error(`Error getting orders for user ${userName}:`, error);
+    throw error;
   }
 }
 
-const getAllOrders = async () => {
-  console.log("getAllOrders");
+// Get all orders
+async function getAllOrders() {
+  console.log("Getting all orders");
+
   try {
     const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME
+      TableName: tableName
     };
 
-    const { Items } = await ddbClient.send(new ScanCommand(params));
+    const { Items } = await ddbDocClient.send(new ScanCommand(params));
+    console.log(`Found ${Items.length} total orders`);
 
-    console.log(Items);
-    return (Items) ? Items.map((item) => unmarshall(item)) : {};
-
-  } catch (e) {
-    console.error(e);
-    throw e;
+    return Items;
+  } catch (error) {
+    console.error("Error getting all orders:", error);
+    throw error;
   }
 }

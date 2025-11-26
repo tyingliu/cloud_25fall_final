@@ -1,196 +1,266 @@
-import { DeleteItemCommand, GetItemCommand, PutItemCommand, QueryCommand, ScanCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
-import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { ddbClient } from "./ddbClient";
-import { v4 as uuidv4 } from 'uuid';
+// /src/product/index.js
 
-exports.handler = async function(event) {
-    console.log("request:", JSON.stringify(event, undefined, 2));
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, ScanCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
 
+const client = new DynamoDBClient({});
+const ddbDocClient = DynamoDBDocumentClient.from(client);
+
+const tableName = process.env.DYNAMODB_TABLE_NAME;
+const primaryKey = process.env.PRIMARY_KEY || 'id';
+
+exports.handler = async function (event) {
+  console.log("Request:", JSON.stringify(event, undefined, 2));
+
+  try {
     let body;
-    
-    try {
-      switch (event.httpMethod) {
-        case "GET":
-          if(event.queryStringParameters != null) {
-            body = await getProductsByCategory(event); // GET product/1234?category=Phone
-          }
-          else if (event.pathParameters != null) {
-            body = await getProduct(event.pathParameters.id); // GET product/{id}
-          } else {
-            body = await getAllProducts(); // GET product
-          }
-          break;
-        case "POST":
-          body = await createProduct(event); // POST /product
-          break;
-        case "DELETE":
-          body = await deleteProduct(event.pathParameters.id); // DELETE /product/{id}
-          break;
-        case "PUT":
-            body = await updateProduct(event); // PUT /product/{id}
-          break;
-        default:
-          throw new Error(`Unsupported route: "${event.httpMethod}"`);
-      }
 
-      console.log(body);
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          message: `Successfully finished operation: "${event.httpMethod}"`,
-          body: body
-        })
-      };
+    switch (event.httpMethod) {
+      case "GET":
+        if (event.queryStringParameters) {
+          // GET /product?category=electronics
+          body = await getProductsByCategory(event.queryStringParameters.category);
+        } else if (event.pathParameters && event.pathParameters.id) {
+          // GET /product/{id}
+          body = await getProduct(event.pathParameters.id);
+        } else {
+          // GET /product
+          body = await getAllProducts();
+        }
+        break;
 
-    } catch (e) {
-      console.error(e);
-      return {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: "Failed to perform operation.",
-          errorMsg: e.message,
-          errorStack: e.stack,
-        })
-      };
+      case "POST":
+        // POST /product
+        body = await createProduct(JSON.parse(event.body));
+        break;
+
+      case "PUT":
+        // PUT /product/{id}
+        body = await updateProduct(event.pathParameters.id, JSON.parse(event.body));
+        break;
+
+      case "DELETE":
+        // DELETE /product/{id}
+        body = await deleteProduct(event.pathParameters.id);
+        break;
+
+      default:
+        throw new Error(`Unsupported method: ${event.httpMethod}`);
     }
+
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS"
+      },
+      body: JSON.stringify(body)
+    };
+
+  } catch (error) {
+    console.error("Error:", error);
+    return {
+      statusCode: error.statusCode || 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
+      },
+      body: JSON.stringify({
+        message: error.message || "Failed to process request",
+        error: error.message
+      })
+    };
+  }
 };
 
-const getProduct = async (productId) => {
-  console.log("getProduct");
+// Get a single product
+async function getProduct(productId) {
+  console.log(`Getting product: ${productId}`);
 
   try {
     const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME,
-      Key: marshall({ id: productId })
+      TableName: tableName,
+      Key: {
+        [primaryKey]: productId
+      }
     };
 
-    const { Item } = await ddbClient.send(new GetItemCommand(params));
+    const { Item } = await ddbDocClient.send(new GetCommand(params));
 
-    console.log(Item);
-    return (Item) ? unmarshall(Item) : {};
+    if (!Item) {
+      const error = new Error(`Product not found: ${productId}`);
+      error.statusCode = 404;
+      throw error;
+    }
 
-  } catch(e) {
-    console.error(e);
-    throw e;
+    console.log(`Found product: ${productId}`);
+    return Item;
+  } catch (error) {
+    console.error(`Error getting product ${productId}:`, error);
+    throw error;
   }
 }
 
-const getAllProducts = async () => {
-  console.log("getAllProducts");
+// Get all products
+async function getAllProducts() {
+  console.log("Getting all products");
+
   try {
     const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME
+      TableName: tableName
     };
 
-    const { Items } = await ddbClient.send(new ScanCommand(params));
+    const { Items } = await ddbDocClient.send(new ScanCommand(params));
+    console.log(`Found ${Items.length} products`);
 
-    console.log(Items);
-    return (Items) ? Items.map((item) => unmarshall(item)) : {};
-
-  } catch(e) {
-    console.error(e);
-    throw e;
+    return Items;
+  } catch (error) {
+    console.error("Error getting all products:", error);
+    throw error;
   }
 }
 
-const createProduct = async (event) => {
-  console.log(`createProduct function. event : "${event}"`);
-  try {
-    const productRequest = JSON.parse(event.body);
-    // set productid
-    const productId = uuidv4();
-    productRequest.id = productId;
-
-    const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME,
-      Item: marshall(productRequest || {})
-    };
-
-    const createResult = await ddbClient.send(new PutItemCommand(params));
-
-    console.log(createResult);
-    return createResult;
-
-  } catch(e) {
-    console.error(e);
-    throw e;
-  }
-}
-
-const deleteProduct = async (productId) => {
-  console.log(`deleteProduct function. productId : "${productId}"`);
+// Get products by category
+async function getProductsByCategory(category) {
+  console.log(`Getting products by category: ${category}`);
 
   try {
     const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME,
-      Key: marshall({ id: productId }),
-    };
-
-    const deleteResult = await ddbClient.send(new DeleteItemCommand(params));
-
-    console.log(deleteResult);
-    return deleteResult;
-  } catch(e) {
-    console.error(e);
-    throw e;
-  }
-}
-
-const updateProduct = async (event) => {
-  console.log(`updateProduct function. event : "${event}"`);
-  try {
-    const requestBody = JSON.parse(event.body);
-    const objKeys = Object.keys(requestBody);
-    console.log(`updateProduct function. requestBody : "${requestBody}", objKeys: "${objKeys}"`);    
-
-    const params = {
-      TableName: process.env.DYNAMODB_TABLE_NAME,
-      Key: marshall({ id: event.pathParameters.id }),
-      UpdateExpression: `SET ${objKeys.map((_, index) => `#key${index} = :value${index}`).join(", ")}`,
-      ExpressionAttributeNames: objKeys.reduce((acc, key, index) => ({
-          ...acc,
-          [`#key${index}`]: key,
-      }), {}),
-      ExpressionAttributeValues: marshall(objKeys.reduce((acc, key, index) => ({
-          ...acc,
-          [`:value${index}`]: requestBody[key],
-      }), {})),
-    };
-
-    const updateResult = await ddbClient.send(new UpdateItemCommand(params));
-
-    console.log(updateResult);
-    return updateResult;
-  } catch(e) {
-    console.error(e);
-    throw e;
-  }
-
-}
-
-const getProductsByCategory = async (event) => {
-  console.log("getProductsByCategory");
-  try {
-    // GET product/1234?category=Phone
-    const productId = event.pathParameters.id;
-    const category = event.queryStringParameters.category;
-
-    const params = {
-      KeyConditionExpression: "id = :productId",
-      FilterExpression: "contains (category, :category)",
+      TableName: tableName,
+      FilterExpression: 'category = :category',
       ExpressionAttributeValues: {
-        ":productId": { S: productId },
-        ":category": { S: category }
-      },      
-      TableName: process.env.DYNAMODB_TABLE_NAME
+        ':category': category
+      }
     };
 
-    const { Items } = await ddbClient.send(new QueryCommand(params));
+    const { Items } = await ddbDocClient.send(new ScanCommand(params));
+    console.log(`Found ${Items.length} products in category: ${category}`);
 
-    console.log(Items);
-    return Items.map((item) => unmarshall(item));
-  } catch(e) {
-    console.error(e);
-    throw e;
+    return Items;
+  } catch (error) {
+    console.error(`Error getting products by category ${category}:`, error);
+    throw error;
+  }
+}
+
+// Create new product
+async function createProduct(productData) {
+  console.log("Creating product:", productData);
+
+  if (!productData.id) {
+    throw new Error("Product id is required");
+  }
+
+  try {
+    const product = {
+      [primaryKey]: productData.id,
+      name: productData.name || '',
+      description: productData.description || '',
+      imageFile: productData.imageFile || '',
+      price: productData.price || 0,
+      category: productData.category || '',
+      // Inventory fields
+      availableStock: productData.availableStock || 0,
+      reservedStock: productData.reservedStock || 0,
+      reorderLevel: productData.reorderLevel || 10,
+      lastRestocked: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+
+    const params = {
+      TableName: tableName,
+      Item: product
+    };
+
+    await ddbDocClient.send(new PutCommand(params));
+    console.log(`Product created: ${productData.id}`);
+
+    return product;
+  } catch (error) {
+    console.error("Error creating product:", error);
+    throw error;
+  }
+}
+
+// Update product
+async function updateProduct(productId, updateData) {
+  console.log(`Updating product: ${productId}`, updateData);
+
+  try {
+    const updateExpressions = [];
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {};
+
+    // Build dynamic update expression for product fields
+    const fields = ['name', 'description', 'imageFile', 'price', 'category',
+      'availableStock', 'reservedStock', 'reorderLevel'];
+
+    fields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        updateExpressions.push(`#${field} = :${field}`);
+        expressionAttributeNames[`#${field}`] = field;
+        expressionAttributeValues[`:${field}`] = updateData[field];
+      }
+    });
+
+    if (updateExpressions.length === 0) {
+      throw new Error("No fields to update");
+    }
+
+    // Always update lastRestocked if stock fields are updated
+    if (updateData.availableStock !== undefined || updateData.reservedStock !== undefined) {
+      updateExpressions.push('#lastRestocked = :lastRestocked');
+      expressionAttributeNames['#lastRestocked'] = 'lastRestocked';
+      expressionAttributeValues[':lastRestocked'] = new Date().toISOString();
+    }
+
+    const params = {
+      TableName: tableName,
+      Key: {
+        [primaryKey]: productId
+      },
+      UpdateExpression: `SET ${updateExpressions.join(', ')}`,
+      ExpressionAttributeNames: expressionAttributeNames,
+      ExpressionAttributeValues: expressionAttributeValues,
+      ReturnValues: 'ALL_NEW'
+    };
+
+    const { Attributes } = await ddbDocClient.send(new UpdateCommand(params));
+    console.log(`Product updated: ${productId}`);
+
+    return Attributes;
+  } catch (error) {
+    console.error(`Error updating product ${productId}:`, error);
+    throw error;
+  }
+}
+
+// Delete product
+async function deleteProduct(productId) {
+  console.log(`Deleting product: ${productId}`);
+
+  try {
+    const params = {
+      TableName: tableName,
+      Key: {
+        [primaryKey]: productId
+      },
+      ReturnValues: 'ALL_OLD'
+    };
+
+    const { Attributes } = await ddbDocClient.send(new DeleteCommand(params));
+
+    if (!Attributes) {
+      const error = new Error(`Product not found: ${productId}`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    console.log(`Product deleted: ${productId}`);
+    return { message: `Product deleted: ${productId}` };
+  } catch (error) {
+    console.error(`Error deleting product ${productId}:`, error);
+    throw error;
   }
 }
