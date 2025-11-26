@@ -1,3 +1,4 @@
+// /Users/tzuying/CS6620/final project/aws-microservices/lib/apigateway.ts
 import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
 import { IFunction } from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
@@ -8,7 +9,7 @@ interface SwnApiGatewayProps {
     orderingMicroservices: IFunction
 }
 
-export class SwnApiGateway extends Construct {    
+export class SwnApiGateway extends Construct {
 
     constructor(scope: Construct, id: string, props: SwnApiGatewayProps) {
         super(scope, id);
@@ -22,31 +23,31 @@ export class SwnApiGateway extends Construct {
     }
 
     private createProductApi(productMicroservice: IFunction) {
-      // Product microservices api gateway
-      // root name = product
+        // Product microservices api gateway
+        // root name = product
 
-      // GET /product
-      // POST /product
+        // GET /product
+        // POST /product
 
-      // Single product with id parameter
-      // GET /product/{id}
-      // PUT /product/{id}
-      // DELETE /product/{id}
+        // Single product with id parameter
+        // GET /product/{id}
+        // PUT /product/{id}
+        // DELETE /product/{id}
 
-      const apigw = new LambdaRestApi(this, 'productApi', {
-        restApiName: 'Product Service',
-        handler: productMicroservice,
-        proxy: false
-      });
-  
-      const product = apigw.root.addResource('product');
-      product.addMethod('GET'); // GET /product
-      product.addMethod('POST');  // POST /product
-      
-      const singleProduct = product.addResource('{id}'); // product/{id}
-      singleProduct.addMethod('GET'); // GET /product/{id}
-      singleProduct.addMethod('PUT'); // PUT /product/{id}
-      singleProduct.addMethod('DELETE'); // DELETE /product/{id}
+        const apigw = new LambdaRestApi(this, 'productApi', {
+            restApiName: 'Product Service',
+            handler: productMicroservice,
+            proxy: false
+        });
+
+        const product = apigw.root.addResource('product');
+        product.addMethod('GET'); // GET /product
+        product.addMethod('POST');  // POST /product
+
+        const singleProduct = product.addResource('{id}'); // product/{id}
+        singleProduct.addMethod('GET'); // GET /product/{id}
+        singleProduct.addMethod('PUT'); // PUT /product/{id}
+        singleProduct.addMethod('DELETE'); // DELETE /product/{id}
     }
 
     private createBasketApi(basketMicroservice: IFunction) {
@@ -79,7 +80,7 @@ export class SwnApiGateway extends Construct {
 
         const basketCheckout = basket.addResource('checkout');
         basketCheckout.addMethod('POST'); // POST /basket/checkout
-            // expected request payload : { userName : swn }
+        // expected request payload : { userName : swn }
     }
 
     private createOrderApi(orderingMicroservices: IFunction) {
@@ -87,7 +88,7 @@ export class SwnApiGateway extends Construct {
         // root name = order
 
         // GET /order
-	    // GET /order/{userName}
+        // GET /order/{userName}
         // expected request : xxx/order/swn?orderDate=timestamp
         // ordering ms grap input and query parameters and filter to dynamo db
 
@@ -96,15 +97,15 @@ export class SwnApiGateway extends Construct {
             handler: orderingMicroservices,
             proxy: false
         });
-    
+
         const order = apigw.root.addResource('order');
         order.addMethod('GET');  // GET /order        
-    
+
         const singleOrder = order.addResource('{userName}');
         singleOrder.addMethod('GET');  // GET /order/{userName}
-            // expected request : xxx/order/swn?orderDate=timestamp
-            // ordering ms grap input and query parameters and filter to dynamo db
-    
+        // expected request : xxx/order/swn?orderDate=timestamp
+        // ordering ms grap input and query parameters and filter to dynamo db
+
         return singleOrder;
     }
 }

@@ -2,36 +2,43 @@ import { PutItemCommand, QueryCommand, ScanCommand } from "@aws-sdk/client-dynam
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { ddbClient } from "./ddbClient";
 
-exports.handler = async function(event) {
-    console.log("request:", JSON.stringify(event, undefined, 2));
+exports.handler = async function (event) {
+  console.log("request:", JSON.stringify(event, undefined, 2));
 
-    if(event.Records != null) {
-      // SQS Invocation
-      await sqsInvocation(event);
-    }
-    else if (event['detail-type'] !== undefined) {
-      // EventBridge Invocation
-      await eventBridgeInvocation(event);
-    } else {
-      // API Gateway Invocation -- return sync response
-      return await apiGatewayInvocation(event);
-    }
+  if (event.Records != null) {
+    // SQS Invocation
+    await sqsInvocation(event);
+  }
+  else if (event['detail-type'] !== undefined) {
+    // EventBridge Invocation
+    await eventBridgeInvocation(event);
+  } else {
+    // API Gateway Invocation -- return sync response
+    return await apiGatewayInvocation(event);
+  }
 };
 
 const sqsInvocation = async (event) => {
-  console.log(`sqsInvocation function. event : "${event}"`);
-  
-  event.Records.forEach(async (record) => {
-    console.log('Record: %j', record);
-    
-    // expected request : { "detail-type\":\"CheckoutBasket\",\"source\":\"com.swn.basket.checkoutbasket\", "detail\":{\"userName\":\"swn\",\"totalPrice\":1820, .. }
-    const checkoutEventRequest = JSON.parse(record.body); 
-    
-    // create order item into db
-    await createOrder(checkoutEventRequest.detail); 
-    // detail object should be checkoutbasket json object
-  });
-}
+  console.log(`sqsInvocation function. event : "${JSON.stringify(event)}"`);
+
+  // Use for...of instead of forEach
+  for (const record of event.Records) {
+    try {
+      console.log("Record: %j", record);
+      const checkoutEventRequest = JSON.parse(record.body);
+
+      console.log("Processing order for user:", checkoutEventRequest.detail.userName);
+      await createOrder(checkoutEventRequest.detail);
+      console.log("Successfully created order for:", checkoutEventRequest.detail.userName);
+
+    } catch (error) {
+      console.error("Error creating order:", error);
+      throw error; // This makes SQS retry the message
+    }
+  }
+
+  console.log("All SQS records processed");
+};
 
 const eventBridgeInvocation = async (event) => {
   console.log(`eventBridgeInvocation function. event : "${event}"`);
@@ -48,7 +55,7 @@ const createOrder = async (basketCheckoutEvent) => {
     const orderDate = new Date().toISOString();
     basketCheckoutEvent.orderDate = orderDate;
     console.log(basketCheckoutEvent);
-    
+
     const params = {
       TableName: process.env.DYNAMODB_TABLE_NAME,
       Item: marshall(basketCheckoutEvent || {})
@@ -58,7 +65,7 @@ const createOrder = async (basketCheckoutEvent) => {
     console.log(createResult);
     return createResult;
 
-  } catch(e) {
+  } catch (e) {
     console.error(e);
     throw e;
   }
@@ -66,51 +73,51 @@ const createOrder = async (basketCheckoutEvent) => {
 
 const apiGatewayInvocation = async (event) => {
   // GET /order	
-	// GET /order/{userName}
+  // GET /order/{userName}
   let body;
 
   try {
     switch (event.httpMethod) {
-        case "GET":
-            if (event.pathParameters != null) {
-            body = await getOrder(event);
-            } else {
-            body = await getAllOrders();
-            }
-            break;
-        default:
-            throw new Error(`Unsupported route: "${event.httpMethod}"`);
+      case "GET":
+        if (event.pathParameters != null) {
+          body = await getOrder(event);
+        } else {
+          body = await getAllOrders();
+        }
+        break;
+      default:
+        throw new Error(`Unsupported route: "${event.httpMethod}"`);
     }
 
     console.log(body);
     return {
-        statusCode: 200,
-        body: JSON.stringify({
-            message: `Successfully finished operation: "${event.httpMethod}"`,
-            body: body
-        })
+      statusCode: 200,
+      body: JSON.stringify({
+        message: `Successfully finished operation: "${event.httpMethod}"`,
+        body: body
+      })
     };
   }
-  catch(e) {
-      console.error(e);
-      return {
+  catch (e) {
+    console.error(e);
+    return {
       statusCode: 500,
       body: JSON.stringify({
-          message: "Failed to perform operation.",
-          errorMsg: e.message,
-          errorStack: e.stack,
-        })
-      };
+        message: "Failed to perform operation.",
+        errorMsg: e.message,
+        errorStack: e.stack,
+      })
+    };
   }
 }
 
 const getOrder = async (event) => {
   console.log("getOrder");
-    
+
   try {
     // expected request : xxx/order/swn?orderDate=timestamp
-    const userName = event.pathParameters.userName;  
-    const orderDate = event.queryStringParameters.orderDate; 
+    const userName = event.pathParameters.userName;
+    const orderDate = event.queryStringParameters.orderDate;
 
     const params = {
       KeyConditionExpression: "userName = :userName and orderDate = :orderDate",
@@ -120,31 +127,31 @@ const getOrder = async (event) => {
       },
       TableName: process.env.DYNAMODB_TABLE_NAME
     };
- 
+
     const { Items } = await ddbClient.send(new QueryCommand(params));
 
     console.log(Items);
     return Items.map((item) => unmarshall(item));
-  } catch(e) {
+  } catch (e) {
     console.error(e);
     throw e;
   }
 }
 
-const getAllOrders = async () => {  
-  console.log("getAllOrders");    
+const getAllOrders = async () => {
+  console.log("getAllOrders");
   try {
-      const params = {
+    const params = {
       TableName: process.env.DYNAMODB_TABLE_NAME
-      };
-  
-      const { Items } = await ddbClient.send(new ScanCommand(params));
+    };
 
-      console.log(Items);
-      return (Items) ? Items.map((item) => unmarshall(item)) : {};
+    const { Items } = await ddbClient.send(new ScanCommand(params));
 
-  } catch(e) {
-      console.error(e);
-      throw e;
+    console.log(Items);
+    return (Items) ? Items.map((item) => unmarshall(item)) : {};
+
+  } catch (e) {
+    console.error(e);
+    throw e;
   }
 }
