@@ -1,4 +1,4 @@
-import { LambdaRestApi } from "aws-cdk-lib/aws-apigateway";
+import { LambdaRestApi, Cors } from "aws-cdk-lib/aws-apigateway";  // ← Add Cors import
 import { IFunction } from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
@@ -6,15 +6,7 @@ export interface SwnApiGatewayProps {
     productMicroservice: IFunction;
     basketMicroservice: IFunction;
     orderingMicroservices: IFunction;
-    /**
-     * Environment name (e.g., 'dev', 'prod')
-     * @default 'dev'
-     */
     environment?: string;
-    /**
-     * Stage name for API Gateway
-     * @default 'prod'
-     */
     stageName?: string;
 }
 
@@ -28,11 +20,8 @@ export class SwnApiGateway extends Construct {
         const environment = props.environment || 'dev';
         const stageName = props.stageName || 'prod';
 
-        // Product microservices api gateway
         this.createProductApi(props.productMicroservice, stageName);
-        // Basket microservices api gateway
         this.createBasketApi(props.basketMicroservice, stageName);
-        // Ordering microservices api gateway
         const orderApi = this.createOrderApi(props.orderingMicroservices, stageName);
 
         this.apiUrl = orderApi.url;
@@ -48,6 +37,18 @@ export class SwnApiGateway extends Construct {
                 stageName: stageName,
                 throttlingRateLimit: 100,
                 throttlingBurstLimit: 200
+            },
+            // ← ADD CORS HERE
+            defaultCorsPreflightOptions: {
+                allowOrigins: Cors.ALL_ORIGINS,
+                allowMethods: Cors.ALL_METHODS,
+                allowHeaders: [
+                    'Content-Type',
+                    'X-Amz-Date',
+                    'Authorization',
+                    'X-Api-Key',
+                    'X-Amz-Security-Token'
+                ]
             }
         });
 
@@ -71,6 +72,18 @@ export class SwnApiGateway extends Construct {
                 stageName: stageName,
                 throttlingRateLimit: 100,
                 throttlingBurstLimit: 200
+            },
+            // ← ADD CORS HERE TOO
+            defaultCorsPreflightOptions: {
+                allowOrigins: Cors.ALL_ORIGINS,
+                allowMethods: Cors.ALL_METHODS,
+                allowHeaders: [
+                    'Content-Type',
+                    'X-Amz-Date',
+                    'Authorization',
+                    'X-Api-Key',
+                    'X-Amz-Security-Token'
+                ]
             }
         });
 
@@ -96,6 +109,18 @@ export class SwnApiGateway extends Construct {
                 stageName: stageName,
                 throttlingRateLimit: 100,
                 throttlingBurstLimit: 200
+            },
+            // ← ADD CORS HERE TOO
+            defaultCorsPreflightOptions: {
+                allowOrigins: Cors.ALL_ORIGINS,
+                allowMethods: Cors.ALL_METHODS,
+                allowHeaders: [
+                    'Content-Type',
+                    'X-Amz-Date',
+                    'Authorization',
+                    'X-Api-Key',
+                    'X-Amz-Security-Token'
+                ]
             }
         });
 
