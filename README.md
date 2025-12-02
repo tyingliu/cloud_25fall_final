@@ -60,3 +60,9 @@ cdk deploy
 * **Mehmet Ozkaya** - *Initial work* - [mehmetozkaya](https://github.com/mehmetozkaya)
 
 See also the list of [contributors](https://github.com/aspnetrun/run-core/contributors) who participated in this project. Check also [gihtub page of repository.](https://aspnetrun.github.io/run-aspnetcore-angular-realworld/)
+
+
+
+## 11/29 version:
+- connect frontend with backend (basketmicroservice)
+- complete testing of: creating product, creating basket, adding products into basket, checkout functionality/API.

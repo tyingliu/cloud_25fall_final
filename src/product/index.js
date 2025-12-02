@@ -12,6 +12,18 @@ const primaryKey = process.env.PRIMARY_KEY || 'id';
 exports.handler = async function (event) {
   console.log("Request:", JSON.stringify(event, undefined, 2));
 
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+        'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+      },
+      body: ''
+    };
+  }
+
   try {
     let body;
 
@@ -53,6 +65,7 @@ exports.handler = async function (event) {
       headers: {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
         "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS"
       },
       body: JSON.stringify(body)
